@@ -1,0 +1,436 @@
+---
+title: "Buhamra et al. Dataset Construction"
+output: html_notebook
+---
+
+# Setup details
+
+```{r}
+# Install necessary packages
+install.packages("devtools")
+install.packages("fastmap")
+```
+
+```{r}
+# Load devtools
+library(devtools)
+```
+
+```{r}
+# Install deuce package from GitHub repository
+install_github("skoval/deuce")
+```
+
+```{r}
+# Learn about deuce package
+help(package = "deuce")
+```
+
+```{r}
+# Load packages
+library(deuce)
+library(dplyr)
+library(lubridate)
+library(tidyr)
+```
+
+# ATP matches data
+
+```{r}
+# Get atp_matches data
+data(atp_matches)
+atp_matches
+```
+
+```{r}
+# Filter to get completed grand slam matches in years 2011-2022
+grand_slam_matches <- atp_matches %>%
+  filter(
+    tourney_name %in% c("Australian Open", "Roland Garros", "Wimbledon", "US Open"),
+    between(year, 2011, 2022),
+    (is.na(Retirement) | Retirement == FALSE)
+  )
+grand_slam_matches
+```
+
+```{r}
+# Adjust column names and player name formatting
+grand_slam_matches <- grand_slam_matches %>%
+  mutate(
+    winner_name = {
+      parts <- str_split(winner_name, " ", simplify = TRUE)
+      first <- parts[,1]
+      last <- apply(parts[, -1, drop=FALSE], 1, function(x) paste(x[x != ""], collapse = " "))
+      paste(last, paste0(str_sub(first, 1, 1), "."))
+    },
+    loser_name = {
+      parts <- str_split(loser_name, " ", simplify = TRUE)
+      first <- parts[,1]
+      last <- apply(parts[, -1, drop=FALSE], 1, function(x) paste(x[x != ""], collapse = " "))
+      paste(last, paste0(str_sub(first, 1, 1), "."))
+    }
+  ) %>%
+  rename(
+    Winner = winner_name,
+    Loser = loser_name,
+    Year = year,
+    Tournament = tourney_name
+  )
+grand_slam_matches
+```
+
+```{r}
+# Find out number of matches
+nrow(grand_slam_matches)
+```
+
+```{r}
+# Check for duplicate matches
+grand_slam_matches %>%
+  group_by(Tournament, Year, Winner, Loser) %>%
+  filter(n() > 1) %>%
+  ungroup()
+```
+```{r}
+# Arbitrarily remove one of the duplicates
+grand_slam_matches <- grand_slam_matches %>%
+  filter(!(Tournament == "Roland Garros" &
+           Year == 2013 &
+           Winner == "Przysiezny M." &
+           Loser == "Williams R." &
+           score == "6-3 6-7(5) 7-5 7-5"))
+grand_slam_matches
+```
+
+```{r}
+# Check number of matches after removal
+nrow(grand_slam_matches)
+```
+
+```{r}
+# Verify no duplicate matches
+grand_slam_matches %>%
+  group_by(Tournament, Year, Winner, Loser) %>%
+  filter(n() > 1) %>%
+  ungroup()
+```
+
+
+# ATP odds data
+
+```{r}
+data(atp_odds)
+atp_odds
+```
+
+
+```{r}
+# Construct odds dataset
+
+# Create year column, ensure correct tournament names, select only needed columns
+odds <- atp_odds %>%
+  mutate(Year = year(Date),
+         Tournament = if_else(Tournament == "French Open", "Roland Garros", Tournament)) %>%
+  select(Tournament, Year, Winner, Loser, WRank, LRank, AvgW, AvgL, B365W, B365L)
+
+# Filter to obtain grand slam tournaments in the years 2011-2022
+odds <- odds %>%
+  filter(
+    Tournament %in% c("Australian Open", "Roland Garros", "Wimbledon", "US Open"),
+    between(Year, 2011, 2022)
+  )
+odds
+```
+
+```{r}
+# Find out number of matches
+nrow(odds)
+```
+
+
+```{r}
+# Check for duplicate matches
+odds %>%
+  group_by(Tournament, Year, Winner, Loser) %>%
+  filter(n() > 1) %>%
+  ungroup()
+```
+
+# ATP elo rating data
+
+```{r}
+data(atp_elo)
+atp_elo
+```
+
+```{r}
+# Ensure each match is only recorded once, not one time for each player
+atp_elo_unique <- atp_elo %>%
+  mutate(
+    player1 = pmin(player_name, opponent_name),
+    player2 = pmax(player_name, opponent_name)
+  ) %>%
+  distinct(tourney_name, tourney_start_date, player1, player2, .keep_all = TRUE)
+```
+
+```{r}
+# Adjust column names
+elo <- atp_elo_unique %>%
+  mutate(Year = year(tourney_start_date)) %>%
+  rename(
+    Tournament = tourney_name
+  )
+
+# Change from player and opponent to winner and loser format
+elo <- elo %>%
+  mutate(
+    Winner = if_else(win == 1, player_name, opponent_name),
+    Loser = if_else(win == 1, opponent_name, player_name),
+    Winner_elo = if_else(win == 1, player_before_elo, opponent_before_elo),
+    Loser_elo = if_else(win == 1, opponent_before_elo, player_before_elo)
+  ) %>%
+  select(Tournament, Year, Winner, Loser, Winner_elo, Loser_elo)
+
+# Adjust winner and loser names
+elo <- elo %>%
+  mutate(
+    Winner = {
+      parts <- str_split(Winner, " ", simplify = TRUE)
+      first <- parts[,1]
+      last <- apply(parts[, -1, drop=FALSE], 1, function(x) paste(x[x != ""], collapse = " "))
+      paste(last, paste0(str_sub(first, 1, 1), "."))
+    },
+    Loser = {
+      parts <- str_split(Loser, " ", simplify = TRUE)
+      first <- parts[,1]
+      last <- apply(parts[, -1, drop=FALSE], 1, function(x) paste(x[x != ""], collapse = " "))
+      paste(last, paste0(str_sub(first, 1, 1), "."))
+    }
+  )
+
+# Filter to obtain grand slam tournaments in the years 2011-2022
+elo <- elo %>%
+  filter(
+    Tournament %in% c("Australian Open", "Roland Garros", "Wimbledon", "US Open"),
+    between(Year, 2011, 2022)
+  )
+elo
+```
+
+```{r}
+# Check for duplicate matches
+elo %>%
+  group_by(Tournament, Year, Winner, Loser) %>%
+  filter(n() > 1) %>%
+  ungroup()
+```
+
+```{r}
+# Find out number of matches
+nrow(elo)
+```
+
+# Combine datasets
+
+```{r}
+# Check for matches between grand_slam_matches and odds datasets
+matched_with_odds <- grand_slam_matches %>%
+  inner_join(
+    odds %>% select(Tournament, Year, Winner, Loser),
+    by = c("Tournament", "Year", "Winner", "Loser")
+  )
+nrow(matched_with_odds)
+```
+
+```{r}
+# Check for matches between grand_slam_matches and elo datasets
+matched_with_elo <- grand_slam_matches %>%
+  inner_join(
+    elo %>% select(Tournament, Year, Winner, Loser),
+    by = c("Tournament", "Year", "Winner", "Loser")
+  )
+nrow(matched_with_elo)
+```
+
+```{r}
+# Combine datasets
+
+combined <- grand_slam_matches %>%
+  left_join(
+    odds %>% select(Tournament, Year, Winner, Loser, WRank, LRank, AvgW, AvgL, B365W, B365L),
+    by = c("Tournament", "Year", "Winner", "Loser")
+  )
+
+combined <- combined %>%
+  left_join(
+    elo %>% select(Tournament, Year, Winner, Loser, Winner_elo, Loser_elo),
+    by = c("Tournament", "Year", "Winner", "Loser")
+  )
+```
+
+```{r}
+combined
+```
+
+```{r}
+# Convert data type of values in WRank and LRank columns from chr to int
+combined <- combined %>%
+  mutate(
+    WRank = as.integer(WRank),
+    LRank = as.integer(LRank)
+  )
+combined
+```
+
+# Construct desired predictors from paper
+
+```{r}
+# Set seed to randomly assign Winner or Loser to Player1
+set.seed(195)
+
+# Build final dataset
+processed_matches <- combined %>%
+  rowwise() %>%
+  mutate(
+    # Randomly decide whether to swap players
+    swap = sample(c(TRUE, FALSE), size = 1),
+
+    # Define Player1 and Player2 depending on swap
+    Player1 = ifelse(swap, Loser, Winner),
+    Player2 = ifelse(swap, Winner, Loser),
+
+    # Victory: did Player1 win?
+    Victory = ifelse(swap, 0, 1),
+
+    # Player1 and Player2 ages
+    age1 = ifelse(swap, loser_age, winner_age),
+    age2 = ifelse(swap, winner_age, loser_age),
+
+    # Player1 and Player2 ranking points
+    points1 = ifelse(swap, loser_rank_points, winner_rank_points),
+    points2 = ifelse(swap, winner_rank_points, loser_rank_points),
+
+    # Player1 and Player2 ranks
+    rank1 = ifelse(swap, LRank, WRank),
+    rank2 = ifelse(swap, WRank, LRank),
+    
+    # Player1 and Player2 avg odds
+    AvgProb1 = ifelse(swap, AvgL, AvgW),
+    AvgProb2 = ifelse(swap, AvgW, AvgL),
+    
+    # Player1 and Player2 bookmaker Bet365 odds
+    B365.1 = ifelse(swap, B365L, B365W),
+    B365.2 = ifelse(swap, B365W, B365L),
+    
+    # Player1 and Player2 bookmaker pre-match elo ratings
+    elo1 = ifelse(swap, Loser_elo, Winner_elo),
+    elo2 = ifelse(swap, Winner_elo, Loser_elo),
+    
+    # Compute differences
+    Age = age1 - age2,
+    Points = points1 - points2,
+    Rank = rank1 - rank2,
+    Elo = elo1 - elo2,
+    Prob = AvgProb1 - AvgProb2,
+
+    # Compute Age.30
+    Age.30 = (abs(age1 - 30)) - (abs(age2 - 30)),
+
+    # Compute Age.int
+    age1_int = ifelse(age1 < 28, abs(age1 - 28),
+                      ifelse(age1 > 32, abs(age1 - 32), 0)),
+    age2_int = ifelse(age2 < 28, abs(age2 - 28),
+                      ifelse(age2 > 32, abs(age2 - 32), 0)),
+    Age.int = age1_int - age2_int
+  ) %>%
+  ungroup() %>%
+  select(Player1, Player2, Year, Tournament, Surface = surface, Victory, Age, Prob, Rank, Points, Elo, Age.30, Age.int, 
+         AvgProb1, AvgProb2, B365.1, B365.2)
+```
+
+```{r}
+# Filter out rows with NA values
+processed_matches <- processed_matches %>%
+  drop_na()
+```
+
+```{r}
+# Check number of matches in dataset
+nrow(processed_matches)
+```
+
+
+# Group one-time players into a category called "newcomer"
+
+```{r}
+# Identify names of players who only participated in a single grand slam tournament
+
+players_years <- processed_matches %>%
+  select(Player1, Tournament, Year) %>%
+  rename(Player = Player1) %>%
+  bind_rows(
+    processed_matches %>%
+      select(Player2, Tournament, Year) %>%
+      rename(Player = Player2)
+  )
+
+# Remove duplicates (multiple matches in same tournament/year)
+players_years <- players_years %>%
+  distinct(Player, Tournament, Year)
+
+# Count how many distinct (Tournament, Year) combinations each player has
+players_tournament_year_counts <- players_years %>%
+  count(Player, name = "num_tournaments_years")
+
+# Filter players who only played in one tournament+year
+players_single_appearance <- players_tournament_year_counts %>%
+  filter(num_tournaments_years <= 1)
+
+players_single_appearance
+```
+
+```{r}
+# Check identification was done correctly
+altmaier_matches <- processed_matches %>%
+  filter(Player1 == "Altmaier D." | Player2 == "Altmaier D.")
+altmaier_matches
+```
+
+```{r}
+# Replace names of players who only played in one tournament with the group name "newcomer"
+single_appearance_players <- players_single_appearance$Player
+
+# Replace Player1 and Player2 if they are in the list of single_appearance_players
+processed_matches <- processed_matches %>%
+  mutate(
+    Player1 = if_else(Player1 %in% single_appearance_players, "newcomer", Player1),
+    Player2 = if_else(Player2 %in% single_appearance_players, "newcomer", Player2)
+  )
+
+processed_matches
+```
+
+```{r}
+# Check newcomer category successfully integrated
+"newcomer" %in% unique(c(processed_matches$Player1, processed_matches$Player2))
+```
+
+```{r}
+# Check number of matches in final dataset
+nrow(processed_matches)
+```
+
+```{r}
+# Save the final dataset
+saveRDS(processed_matches, file = "processed_matches.rds")
+```
+
+
+
+
+
+
+
+
+
+
